@@ -65,7 +65,7 @@ class TestSMPOSingleOutput:
         )
 
         input_mps = make_product_state_mps(L, phys_dim=3)
-        output_mps = smpo.apply_mps(smpo, input_mps)
+        output_mps = smpo.apply_mps(input_mps)
 
         assert output_mps.L == 1, f"Expected 1-site output, got {output_mps.L}"
         # The single tensor should have just the physical dimension
@@ -90,7 +90,7 @@ class TestSMPOSingleOutput:
         )
 
         input_mps = make_random_mps(L, phys_dim=3, bond_dim=4)
-        output_mps = smpo.apply_mps(smpo, input_mps)
+        output_mps = smpo.apply_mps(input_mps)
 
         assert output_mps.L == 1, f"Expected 1-site output, got {output_mps.L}"
         output_shape = output_mps.tensors[0].shape
@@ -114,7 +114,7 @@ class TestSMPOSingleOutput:
         )
 
         input_mps = make_product_state_mps(L, phys_dim=2)
-        output_mps = smpo.apply_mps(smpo, input_mps)
+        output_mps = smpo.apply_mps(input_mps)
 
         assert output_mps.L == 1, f"Expected 1-site output, got {output_mps.L}"
 
@@ -134,7 +134,7 @@ class TestSMPOSingleOutput:
         )
 
         input_mps = make_product_state_mps(L, phys_dim=3)
-        output_mps = smpo.apply_mps(smpo, input_mps, normalize_on_contract=False)
+        output_mps = smpo.apply_mps(input_mps, normalize_on_contract=False)
 
         assert output_mps.L == 1, f"Expected 1-site output, got {output_mps.L}"
 
@@ -154,7 +154,7 @@ class TestSMPOSingleOutput:
         )
 
         input_mps = make_product_state_mps(L, phys_dim=3)
-        output_mps = smpo.apply_mps(smpo, input_mps)
+        output_mps = smpo.apply_mps(input_mps)
 
         norm_val = float(jnp.linalg.norm(output_mps.tensors[0].data))
         assert np.isfinite(norm_val), f"Output norm is not finite: {norm_val}"
@@ -180,7 +180,7 @@ class TestSMPOMultiOutputBackwardCompat:
         )
 
         input_mps = make_product_state_mps(L, phys_dim=2)
-        output_mps = smpo.apply_mps(smpo, input_mps)
+        output_mps = smpo.apply_mps(input_mps)
 
         assert output_mps.L == 2, f"Expected 2-site output, got {output_mps.L}"
 
@@ -200,7 +200,7 @@ class TestSMPOMultiOutputBackwardCompat:
         )
 
         input_mps = make_product_state_mps(L, phys_dim=2)
-        output_mps = smpo.apply_mps(smpo, input_mps)
+        output_mps = smpo.apply_mps(input_mps)
 
         # Outputs at 0, 3, 6, 9 -> 4 output sites
         # (Actually depends on how quimb handles L=10, spacing=3)
@@ -222,7 +222,7 @@ class TestSMPOMultiOutputBackwardCompat:
         )
 
         input_mps = make_random_mps(L, phys_dim=3, bond_dim=4)
-        output_mps = smpo.apply_mps(smpo, input_mps)
+        output_mps = smpo.apply_mps(input_mps)
 
         assert output_mps.L == 2, f"Expected 2-site output, got {output_mps.L}"
 
@@ -247,7 +247,7 @@ class TestSMPOSingleOutputLargerBond:
         )
 
         input_mps = make_product_state_mps(L, phys_dim=3)
-        output_mps = smpo.apply_mps(smpo, input_mps)
+        output_mps = smpo.apply_mps(input_mps)
 
         assert output_mps.L == 1, f"Expected 1-site output, got {output_mps.L}"
 
@@ -267,6 +267,6 @@ class TestSMPOSingleOutputLargerBond:
         )
 
         input_mps = make_product_state_mps(L, phys_dim=3)
-        output_mps = smpo.apply_mps(smpo, input_mps)
+        output_mps = smpo.apply_mps(input_mps)
 
         assert output_mps.L == 1, f"Expected 1-site output for L={L}, got {output_mps.L}"
