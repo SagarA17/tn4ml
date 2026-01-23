@@ -1,0 +1,1115 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.10, pytest-8.4.2, pluggy-1.6.0 -- /lus/eagle/projects/ATLAS_workflow_ALCF/sagar/conda/envs/QiML/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /home/sagar/QiML/tn4ml
+configfile: pyproject.toml
+plugins: anyio-4.11.0
+collecting ... collected 16 items
+
+test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_product_state FAILED [  6%]
+test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_random_mps FAILED [ 12%]
+test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_small FAILED [ 18%]
+test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_no_normalize FAILED [ 25%]
+test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_norm_is_finite FAILED [ 31%]
+test/test_smpo_single_output.py::TestSMPOMultiOutputBackwardCompat::test_multi_output_spacing5 FAILED [ 37%]
+test/test_smpo_single_output.py::TestSMPOMultiOutputBackwardCompat::test_multi_output_spacing3 FAILED [ 43%]
+test/test_smpo_single_output.py::TestSMPOMultiOutputBackwardCompat::test_multi_output_with_random_mps FAILED [ 50%]
+test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_bond_dim[2] FAILED [ 56%]
+test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_bond_dim[4] FAILED [ 62%]
+test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_bond_dim[8] FAILED [ 68%]
+test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_bond_dim[16] FAILED [ 75%]
+test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_system_size[3] FAILED [ 81%]
+test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_system_size[5] FAILED [ 87%]
+test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_system_size[10] FAILED [ 93%]
+test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_system_size[19] FAILED [100%]
+
+=================================== FAILURES ===================================
+____________ TestSMPOSingleOutput.test_single_output_product_state _____________
+
+self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152c7dad25a0>
+
+    def test_single_output_product_state(self):
+        """19->1 SMPO applied to a product-state MPS."""
+        L = 19
+        key = jax.random.PRNGKey(0)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=19,
+            bond_dim=8,
+            phys_dim=(3, 3),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=3)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:68: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+tn_vec = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+normalize_on_contract = MatrixProductState(tensors=19, indices=37, L=19, max_bond=1)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+mps = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+spacings = [19], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+______________ TestSMPOSingleOutput.test_single_output_random_mps ______________
+
+self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152d18befe90>
+
+    def test_single_output_random_mps(self):
+        """19->1 SMPO applied to a random MPS with bond dim > 1."""
+        L = 19
+        key = jax.random.PRNGKey(1)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=19,
+            bond_dim=8,
+            phys_dim=(3, 3),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_random_mps(L, phys_dim=3, bond_dim=4)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:93: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+tn_vec = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+normalize_on_contract = MatrixProductState(tensors=19, indices=37, L=19, max_bond=4)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+mps = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+spacings = [19], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+________________ TestSMPOSingleOutput.test_single_output_small _________________
+
+self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152db3b36390>
+
+    def test_single_output_small(self):
+        """Minimal case: 3->1 SMPO."""
+        L = 3
+        key = jax.random.PRNGKey(2)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=3,
+            bond_dim=4,
+            phys_dim=(2, 2),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=2)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:117: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
+tn_vec = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
+normalize_on_contract = MatrixProductState(tensors=3, indices=5, L=3, max_bond=1)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
+mps = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
+spacings = [3], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+_____________ TestSMPOSingleOutput.test_single_output_no_normalize _____________
+
+self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152c7c726fc0>
+
+    def test_single_output_no_normalize(self):
+        """19->1 without normalization during contraction."""
+        L = 19
+        key = jax.random.PRNGKey(3)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=19,
+            bond_dim=8,
+            phys_dim=(3, 3),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=3)
+>       output_mps = smpo.apply_mps(smpo, input_mps, normalize_on_contract=False)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: SpacedMatrixProductOperator.apply_mps() got multiple values for argument 'normalize_on_contract'
+
+test/test_smpo_single_output.py:137: TypeError
+____________ TestSMPOSingleOutput.test_single_output_norm_is_finite ____________
+
+self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152c81ad16d0>
+
+    def test_single_output_norm_is_finite(self):
+        """Output MPS norm should be finite and nonzero."""
+        L = 19
+        key = jax.random.PRNGKey(4)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=19,
+            bond_dim=8,
+            phys_dim=(3, 3),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=3)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:157: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+tn_vec = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+normalize_on_contract = MatrixProductState(tensors=19, indices=37, L=19, max_bond=1)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+mps = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+spacings = [19], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+_________ TestSMPOMultiOutputBackwardCompat.test_multi_output_spacing5 _________
+
+self = <test.test_smpo_single_output.TestSMPOMultiOutputBackwardCompat object at 0x152c81a360c0>
+
+    def test_multi_output_spacing5(self):
+        """Standard case: L=10, spacing=5 (outputs at 0, 5)."""
+        L = 10
+        key = jax.random.PRNGKey(10)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=5,
+            bond_dim=4,
+            phys_dim=(2, 2),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=2)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:183: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
+tn_vec = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
+normalize_on_contract = MatrixProductState(tensors=10, indices=19, L=10, max_bond=1)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
+mps = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
+spacings = [5, 5], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+_________ TestSMPOMultiOutputBackwardCompat.test_multi_output_spacing3 _________
+
+self = <test.test_smpo_single_output.TestSMPOMultiOutputBackwardCompat object at 0x152c80002810>
+
+    def test_multi_output_spacing3(self):
+        """L=10, spacing=3 (outputs at 0, 3, 6, 9)."""
+        L = 10
+        key = jax.random.PRNGKey(11)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=3,
+            bond_dim=4,
+            phys_dim=(2, 2),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=2)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:203: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=10, indices=23, L=10, max_bond=4)
+tn_vec = SpacedMatrixProductOperator(tensors=10, indices=23, L=10, max_bond=4)
+normalize_on_contract = MatrixProductState(tensors=10, indices=19, L=10, max_bond=1)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=10, indices=23, L=10, max_bond=4)
+mps = SpacedMatrixProductOperator(tensors=10, indices=23, L=10, max_bond=4)
+spacings = [3, 3, 3, 3], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+_____ TestSMPOMultiOutputBackwardCompat.test_multi_output_with_random_mps ______
+
+self = <test.test_smpo_single_output.TestSMPOMultiOutputBackwardCompat object at 0x152c7c7a2ba0>
+
+    def test_multi_output_with_random_mps(self):
+        """Multi-output with non-trivial input bond dimension."""
+        L = 10
+        key = jax.random.PRNGKey(12)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=5,
+            bond_dim=4,
+            phys_dim=(3, 3),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_random_mps(L, phys_dim=3, bond_dim=4)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:225: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
+tn_vec = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
+normalize_on_contract = MatrixProductState(tensors=10, indices=19, L=10, max_bond=4)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
+mps = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
+spacings = [5, 5], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+___________ TestSMPOSingleOutputLargerBond.test_varying_bond_dim[2] ____________
+
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c800027e0>
+bond_dim = 2
+
+    @pytest.mark.parametrize("bond_dim", [2, 4, 8, 16])
+    def test_varying_bond_dim(self, bond_dim):
+        """Single output with different SMPO bond dimensions."""
+        L = 7
+        key = jax.random.PRNGKey(20)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=L,
+            bond_dim=bond_dim,
+            phys_dim=(3, 3),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=3)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=2)
+tn_vec = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=2)
+normalize_on_contract = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=2)
+mps = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=2)
+spacings = [7], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+___________ TestSMPOSingleOutputLargerBond.test_varying_bond_dim[4] ____________
+
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7c725d60>
+bond_dim = 4
+
+    @pytest.mark.parametrize("bond_dim", [2, 4, 8, 16])
+    def test_varying_bond_dim(self, bond_dim):
+        """Single output with different SMPO bond dimensions."""
+        L = 7
+        key = jax.random.PRNGKey(20)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=L,
+            bond_dim=bond_dim,
+            phys_dim=(3, 3),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=3)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=4)
+tn_vec = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=4)
+normalize_on_contract = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=4)
+mps = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=4)
+spacings = [7], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+___________ TestSMPOSingleOutputLargerBond.test_varying_bond_dim[8] ____________
+
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7ee466f0>
+bond_dim = 8
+
+    @pytest.mark.parametrize("bond_dim", [2, 4, 8, 16])
+    def test_varying_bond_dim(self, bond_dim):
+        """Single output with different SMPO bond dimensions."""
+        L = 7
+        key = jax.random.PRNGKey(20)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=L,
+            bond_dim=bond_dim,
+            phys_dim=(3, 3),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=3)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=8)
+tn_vec = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=8)
+normalize_on_contract = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=8)
+mps = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=8)
+spacings = [7], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+___________ TestSMPOSingleOutputLargerBond.test_varying_bond_dim[16] ___________
+
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7eea6d50>
+bond_dim = 16
+
+    @pytest.mark.parametrize("bond_dim", [2, 4, 8, 16])
+    def test_varying_bond_dim(self, bond_dim):
+        """Single output with different SMPO bond dimensions."""
+        L = 7
+        key = jax.random.PRNGKey(20)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=L,
+            bond_dim=bond_dim,
+            phys_dim=(3, 3),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=3)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=16)
+tn_vec = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=16)
+normalize_on_contract = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=16)
+mps = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=16)
+spacings = [7], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+__________ TestSMPOSingleOutputLargerBond.test_varying_system_size[3] __________
+
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7c7a3b90>
+L = 3
+
+    @pytest.mark.parametrize("L", [3, 5, 10, 19])
+    def test_varying_system_size(self, L):
+        """Single output with different system sizes."""
+        key = jax.random.PRNGKey(30)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=L,
+            bond_dim=4,
+            phys_dim=(3, 3),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=3)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:270: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
+tn_vec = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
+normalize_on_contract = MatrixProductState(tensors=3, indices=5, L=3, max_bond=1)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
+mps = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
+spacings = [3], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+__________ TestSMPOSingleOutputLargerBond.test_varying_system_size[5] __________
+
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7c7a3d70>
+L = 5
+
+    @pytest.mark.parametrize("L", [3, 5, 10, 19])
+    def test_varying_system_size(self, L):
+        """Single output with different system sizes."""
+        key = jax.random.PRNGKey(30)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=L,
+            bond_dim=4,
+            phys_dim=(3, 3),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=3)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:270: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=5, indices=10, L=5, max_bond=4)
+tn_vec = SpacedMatrixProductOperator(tensors=5, indices=10, L=5, max_bond=4)
+normalize_on_contract = MatrixProductState(tensors=5, indices=9, L=5, max_bond=1)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=5, indices=10, L=5, max_bond=4)
+mps = SpacedMatrixProductOperator(tensors=5, indices=10, L=5, max_bond=4)
+spacings = [5], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+_________ TestSMPOSingleOutputLargerBond.test_varying_system_size[10] __________
+
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7c7a3f20>
+L = 10
+
+    @pytest.mark.parametrize("L", [3, 5, 10, 19])
+    def test_varying_system_size(self, L):
+        """Single output with different system sizes."""
+        key = jax.random.PRNGKey(30)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=L,
+            bond_dim=4,
+            phys_dim=(3, 3),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=3)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:270: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=10, indices=20, L=10, max_bond=4)
+tn_vec = SpacedMatrixProductOperator(tensors=10, indices=20, L=10, max_bond=4)
+normalize_on_contract = MatrixProductState(tensors=10, indices=19, L=10, max_bond=1)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=10, indices=20, L=10, max_bond=4)
+mps = SpacedMatrixProductOperator(tensors=10, indices=20, L=10, max_bond=4)
+spacings = [10], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+_________ TestSMPOSingleOutputLargerBond.test_varying_system_size[19] __________
+
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7c7a3fe0>
+L = 19
+
+    @pytest.mark.parametrize("L", [3, 5, 10, 19])
+    def test_varying_system_size(self, L):
+        """Single output with different system sizes."""
+        key = jax.random.PRNGKey(30)
+        smpo = SMPO_initialize(
+            L=L,
+            initializer=jax.nn.initializers.normal(stddev=0.1),
+            key=key,
+            spacing=L,
+            bond_dim=4,
+            phys_dim=(3, 3),
+            cyclic=False,
+            boundary='obc'
+        )
+    
+        input_mps = make_product_state_mps(L, phys_dim=3)
+>       output_mps = smpo.apply_mps(smpo, input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test/test_smpo_single_output.py:270: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tn_op = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=4)
+tn_vec = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=4)
+normalize_on_contract = MatrixProductState(tensors=19, indices=37, L=19, max_bond=1)
+compress = False, compress_opts = {}
+smpo = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=4)
+mps = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=4)
+spacings = [19], coordinate_formatter = '{}'
+
+    def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
+        """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
+    
+        Parameters
+        ----------
+        tn_op : :class:`quimb.tensor.tensor_core.TensorNetwork`
+            The tensor network representing the operator.
+        tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
+            The tensor network representing the vector.
+        compress : bool
+            Whether to compress the resulting tensor network.
+        compress_opts: optional
+            Options to pass to ``tn_vec.compress``.
+    
+        Returns
+        -------
+        :class:`quimb.tensor.tensor_1d.MatrixProductState`
+        """
+    
+        smpo, mps = tn_op.copy(), tn_vec.copy()
+    
+        if smpo.spacings:
+            spacings = smpo.spacings
+        else:
+            spacings = [smpo.spacing]*(len(list(smpo.lower_inds)))
+    
+        # align the indices
+        coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
+        smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
+>       smpo.upper_ind_id = mps.site_ind_id
+                            ^^^^^^^^^^^^^^^
+E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+
+tn4ml/models/smpo.py:285: AttributeError
+=============================== warnings summary ===============================
+test/test_smpo_single_output.py: 16 warnings
+  /lus/eagle/projects/ATLAS_workflow_ALCF/sagar/conda/envs/QiML/lib/python3.12/site-packages/jax/_src/nn/initializers.py:170: UserWarning: Explicitly requested dtype <class 'jax.numpy.float64'>  is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+    return random.normal(key, shape, dtype,
+
+test/test_smpo_single_output.py: 16 warnings
+  /lus/eagle/projects/ATLAS_workflow_ALCF/sagar/conda/envs/QiML/lib/python3.12/site-packages/jax/_src/nn/initializers.py:171: UserWarning: Explicitly requested dtype <class 'jax.numpy.float64'> requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+    out_sharding=out_sharding) * jnp.array(stddev, dtype)
+
+test/test_smpo_single_output.py: 16 warnings
+  /home/sagar/QiML/tn4ml/tn4ml/models/smpo.py:679: UserWarning: Explicitly requested dtype <class 'jax.numpy.float64'> requested in zeros is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+    aux_tensor = jnp.zeros(tensor.shape, dtype=dtype)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_product_state
+FAILED test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_random_mps
+FAILED test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_small
+FAILED test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_no_normalize
+FAILED test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_norm_is_finite
+FAILED test/test_smpo_single_output.py::TestSMPOMultiOutputBackwardCompat::test_multi_output_spacing5
+FAILED test/test_smpo_single_output.py::TestSMPOMultiOutputBackwardCompat::test_multi_output_spacing3
+FAILED test/test_smpo_single_output.py::TestSMPOMultiOutputBackwardCompat::test_multi_output_with_random_mps
+FAILED test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_bond_dim[2]
+FAILED test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_bond_dim[4]
+FAILED test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_bond_dim[8]
+FAILED test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_bond_dim[16]
+FAILED test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_system_size[3]
+FAILED test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_system_size[5]
+FAILED test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_system_size[10]
+FAILED test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_system_size[19]
+======================= 16 failed, 48 warnings in 17.47s =======================
