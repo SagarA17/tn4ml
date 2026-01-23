@@ -297,24 +297,40 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
         for S in spacings:
             if S > 1:
                 tags_to_drop = []
-                for j in range(i + 1, i + S):
-                    if j >= number_of_sites - 1:
-                        break
-                    if len(list(list_tensors[j].tags)) > 1:
-                        result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
-                        for tag in list(list_tensors[j].tags):
-                            tags_to_drop.extend([tag])
-                    else:
-                        result.contract_between(tags[j], tags[j + 1])
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+                            result.normalize()
+                else:
+                    # No next output site: contract leftward into current output
+                    # at position i. This handles the edge case where all remaining
+                    # sites must be absorbed into the single (or last) output site.
+                    rightmost = min(i + S - 1, number_of_sites - 1)
+                    for j in range(rightmost, i, -1):
+                        result.contract_between(tags[j], tags[j - 1])
                         tags_to_drop.extend([tags[j]])
-                    if normalize_on_contract:
-                        result.normalize()
+                        if normalize_on_contract:
+                            result.normalize()
+
                 if i + 1 == len(tags):
                     # if last site of smpo has output_ind
                     break
                 result.drop_tags(tags_to_drop)
                 i = i + S
-            
+
             result.fuse_multibonds_()
         
         # if last tensor is a vector, contract it to previous one
@@ -329,25 +345,35 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
         
         arrays = [tensor.data for tensor in sorted_tensors]
 
-        if len(arrays[0].shape) == 3:
-            if arrays[0].shape[0] != 1:
-                arr = np.squeeze(arrays[0])
-                if len(arr.shape) == 2:
-                    arrays[0] = arr
-                elif len(arr.shape) == 1: # weird
-                    arrays[0] = a.do("reshape", arr, (*arr.shape, 1))
-            else:
-                arr = np.squeeze(arrays[0])
-                arrays[0] = arr
-            
-        if len(arrays[-1].shape) == 3:
-            arr = np.squeeze(arrays[-1])
+        # Single-site output: array is already (d_out,), no bonds needed
+        if len(arrays) == 1:
+            arr = np.squeeze(arrays[0])
             if len(arr.shape) == 1:
-                arrays[-1] = a.do("reshape", arr, (*arr.shape, 1))
+                arrays[0] = arr
+            elif len(arr.shape) == 2:
+                arrays[0] = arr
             else:
-                arrays[-1] = arr
-        elif len(arrays[-1].shape) == 1:
-            arrays[-1] = a.do("reshape", arrays[-1], (*arrays[-1].shape, 1))
+                arrays[0] = np.squeeze(arr)
+        else:
+            if len(arrays[0].shape) == 3:
+                if arrays[0].shape[0] != 1:
+                    arr = np.squeeze(arrays[0])
+                    if len(arr.shape) == 2:
+                        arrays[0] = arr
+                    elif len(arr.shape) == 1: # weird
+                        arrays[0] = a.do("reshape", arr, (*arr.shape, 1))
+                else:
+                    arr = np.squeeze(arrays[0])
+                    arrays[0] = arr
+
+            if len(arrays[-1].shape) == 3:
+                arr = np.squeeze(arrays[-1])
+                if len(arr.shape) == 1:
+                    arrays[-1] = a.do("reshape", arr, (*arr.shape, 1))
+                else:
+                    arrays[-1] = arr
+            elif len(arrays[-1].shape) == 1:
+                arrays[-1] = a.do("reshape", arrays[-1], (*arrays[-1].shape, 1))
 
         for i, arr in enumerate(arrays):
             if len(arr.shape) >= 4:
