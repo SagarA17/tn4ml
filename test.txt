@@ -9,7 +9,7 @@ collecting ... collected 16 items
 test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_product_state FAILED [  6%]
 test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_random_mps FAILED [ 12%]
 test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_small FAILED [ 18%]
-test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_no_normalize FAILED [ 25%]
+test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_no_normalize PASSED [ 25%]
 test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_norm_is_finite FAILED [ 31%]
 test/test_smpo_single_output.py::TestSMPOMultiOutputBackwardCompat::test_multi_output_spacing5 FAILED [ 37%]
 test/test_smpo_single_output.py::TestSMPOMultiOutputBackwardCompat::test_multi_output_spacing3 FAILED [ 43%]
@@ -26,7 +26,7 @@ test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_sy
 =================================== FAILURES ===================================
 ____________ TestSMPOSingleOutput.test_single_output_product_state _____________
 
-self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152c7dad25a0>
+self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x14fbde02e720>
 
     def test_single_output_product_state(self):
         """19->1 SMPO applied to a product-state MPS."""
@@ -44,19 +44,20 @@ self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152c7dad25
         )
     
         input_mps = make_product_state_mps(L, phys_dim=3)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:68: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
-tn_vec = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
-normalize_on_contract = MatrixProductState(tensors=19, indices=37, L=19, max_bond=1)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=19, indices=37, L=19, max_bond=1)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
-mps = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+mps = MatrixProductState(tensors=19, indices=37, L=19, max_bond=1)
 spacings = [19], coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=18, indices=35, L=19, max_bond=8), ind = 'k18'
+list_tensors = (Tensor(shape=(8, 3, 1), inds=('bond_0', '__tmp0__', '_3171abAAAAT'), tags=oset(['I0'])), Tensor(shape=(8, 8, 1, 1), i...'I4'])), Tensor(shape=(8, 8, 1, 1), inds=('bond_4', 'bond_5', '_3171abAAAAX', '_3171abAAAAY'), tags=oset(['I5'])), ...)
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -87,14 +88,55 @@ spacings = [19], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+                            result.normalize()
+                else:
+                    # No next output site: contract leftward into current output
+                    # at position i. This handles the edge case where all remaining
+                    # sites must be absorbed into the single (or last) output site.
+                    rightmost = min(i + S - 1, number_of_sites - 1)
+                    for j in range(rightmost, i, -1):
+                        result.contract_between(tags[j], tags[j - 1])
+                        tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:326: AttributeError
 ______________ TestSMPOSingleOutput.test_single_output_random_mps ______________
 
-self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152d18befe90>
+self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x14fd14353950>
 
     def test_single_output_random_mps(self):
         """19->1 SMPO applied to a random MPS with bond dim > 1."""
@@ -112,19 +154,20 @@ self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152d18befe
         )
     
         input_mps = make_random_mps(L, phys_dim=3, bond_dim=4)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:93: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
-tn_vec = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
-normalize_on_contract = MatrixProductState(tensors=19, indices=37, L=19, max_bond=4)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=19, indices=37, L=19, max_bond=4)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
-mps = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+mps = MatrixProductState(tensors=19, indices=37, L=19, max_bond=4)
 spacings = [19], coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=18, indices=35, L=19, max_bond=8), ind = 'k18'
+list_tensors = (Tensor(shape=(8, 3, 4), inds=('bond_0', '__tmp0__', '_3171abAAABE'), tags=oset(['I0'])), Tensor(shape=(8, 8, 4, 4), i...'I4'])), Tensor(shape=(8, 8, 4, 4), inds=('bond_4', 'bond_5', '_3171abAAABI', '_3171abAAABJ'), tags=oset(['I5'])), ...)
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -155,14 +198,55 @@ spacings = [19], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+                            result.normalize()
+                else:
+                    # No next output site: contract leftward into current output
+                    # at position i. This handles the edge case where all remaining
+                    # sites must be absorbed into the single (or last) output site.
+                    rightmost = min(i + S - 1, number_of_sites - 1)
+                    for j in range(rightmost, i, -1):
+                        result.contract_between(tags[j], tags[j - 1])
+                        tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:326: AttributeError
 ________________ TestSMPOSingleOutput.test_single_output_small _________________
 
-self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152db3b36390>
+self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x14fbddb07f80>
 
     def test_single_output_small(self):
         """Minimal case: 3->1 SMPO."""
@@ -180,19 +264,20 @@ self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152db3b363
         )
     
         input_mps = make_product_state_mps(L, phys_dim=2)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:117: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
-tn_vec = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
-normalize_on_contract = MatrixProductState(tensors=3, indices=5, L=3, max_bond=1)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=3, indices=5, L=3, max_bond=1)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
-mps = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
-spacings = [3], coordinate_formatter = '{}'
+mps = MatrixProductState(tensors=3, indices=5, L=3, max_bond=1), spacings = [3]
+coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=2, indices=3, L=3, max_bond=4), ind = 'k2'
+list_tensors = (Tensor(shape=(4, 2, 1), inds=('bond_0', '__tmp0__', '_3171abAAABZ'), tags=oset(['I0'])), Tensor(shape=(4, 4, 1, 1), i...bAAABZ', '_3171abAAABa'), tags=oset(['I1'])), Tensor(shape=(4, 1), inds=('bond_1', '_3171abAAABa'), tags=oset(['I2'])))
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -223,39 +308,55 @@ spacings = [3], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
-
-tn4ml/models/smpo.py:285: AttributeError
-_____________ TestSMPOSingleOutput.test_single_output_no_normalize _____________
-
-self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152c7c726fc0>
-
-    def test_single_output_no_normalize(self):
-        """19->1 without normalization during contraction."""
-        L = 19
-        key = jax.random.PRNGKey(3)
-        smpo = SMPO_initialize(
-            L=L,
-            initializer=jax.nn.initializers.normal(stddev=0.1),
-            key=key,
-            spacing=19,
-            bond_dim=8,
-            phys_dim=(3, 3),
-            cyclic=False,
-            boundary='obc'
-        )
+        smpo.upper_ind_id = mps.site_ind_id
     
-        input_mps = make_product_state_mps(L, phys_dim=3)
->       output_mps = smpo.apply_mps(smpo, input_mps, normalize_on_contract=False)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-E       TypeError: SpacedMatrixProductOperator.apply_mps() got multiple values for argument 'normalize_on_contract'
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+                            result.normalize()
+                else:
+                    # No next output site: contract leftward into current output
+                    # at position i. This handles the edge case where all remaining
+                    # sites must be absorbed into the single (or last) output site.
+                    rightmost = min(i + S - 1, number_of_sites - 1)
+                    for j in range(rightmost, i, -1):
+                        result.contract_between(tags[j], tags[j - 1])
+                        tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-test/test_smpo_single_output.py:137: TypeError
+tn4ml/models/smpo.py:326: AttributeError
 ____________ TestSMPOSingleOutput.test_single_output_norm_is_finite ____________
 
-self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152c81ad16d0>
+self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x14fbddb88fb0>
 
     def test_single_output_norm_is_finite(self):
         """Output MPS norm should be finite and nonzero."""
@@ -273,19 +374,20 @@ self = <test.test_smpo_single_output.TestSMPOSingleOutput object at 0x152c81ad16
         )
     
         input_mps = make_product_state_mps(L, phys_dim=3)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:157: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
-tn_vec = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
-normalize_on_contract = MatrixProductState(tensors=19, indices=37, L=19, max_bond=1)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=19, indices=37, L=19, max_bond=1)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
-mps = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=8)
+mps = MatrixProductState(tensors=19, indices=37, L=19, max_bond=1)
 spacings = [19], coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=18, indices=35, L=19, max_bond=8), ind = 'k18'
+list_tensors = (Tensor(shape=(8, 3, 1), inds=('bond_0', '__tmp0__', '_3171abAAACg'), tags=oset(['I0'])), Tensor(shape=(8, 8, 1, 1), i...'I4'])), Tensor(shape=(8, 8, 1, 1), inds=('bond_4', 'bond_5', '_3171abAAACk', '_3171abAAACl'), tags=oset(['I5'])), ...)
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -316,14 +418,55 @@ spacings = [19], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+                            result.normalize()
+                else:
+                    # No next output site: contract leftward into current output
+                    # at position i. This handles the edge case where all remaining
+                    # sites must be absorbed into the single (or last) output site.
+                    rightmost = min(i + S - 1, number_of_sites - 1)
+                    for j in range(rightmost, i, -1):
+                        result.contract_between(tags[j], tags[j - 1])
+                        tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:326: AttributeError
 _________ TestSMPOMultiOutputBackwardCompat.test_multi_output_spacing5 _________
 
-self = <test.test_smpo_single_output.TestSMPOMultiOutputBackwardCompat object at 0x152c81a360c0>
+self = <test.test_smpo_single_output.TestSMPOMultiOutputBackwardCompat object at 0x14fbddb88200>
 
     def test_multi_output_spacing5(self):
         """Standard case: L=10, spacing=5 (outputs at 0, 5)."""
@@ -341,19 +484,20 @@ self = <test.test_smpo_single_output.TestSMPOMultiOutputBackwardCompat object at
         )
     
         input_mps = make_product_state_mps(L, phys_dim=2)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:183: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
-tn_vec = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
-normalize_on_contract = MatrixProductState(tensors=10, indices=19, L=10, max_bond=1)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=10, indices=19, L=10, max_bond=1)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
-mps = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
+mps = MatrixProductState(tensors=10, indices=19, L=10, max_bond=1)
 spacings = [5, 5], coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=9, indices=18, L=10, max_bond=4), ind = 'k9'
+list_tensors = (Tensor(shape=(4, 2, 1), inds=('bond_0', '__tmp0__', '_3171abAAADI'), tags=oset(['I0'])), Tensor(shape=(4, 4, 1, 1), i...(shape=(4, 4, 2, 1, 1), inds=('bond_4', 'bond_5', '__tmp5__', '_3171abAAADM', '_3171abAAADN'), tags=oset(['I5'])), ...)
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -384,14 +528,45 @@ spacings = [5, 5], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:316: AttributeError
 _________ TestSMPOMultiOutputBackwardCompat.test_multi_output_spacing3 _________
 
-self = <test.test_smpo_single_output.TestSMPOMultiOutputBackwardCompat object at 0x152c80002810>
+self = <test.test_smpo_single_output.TestSMPOMultiOutputBackwardCompat object at 0x14fbddf9bf80>
 
     def test_multi_output_spacing3(self):
         """L=10, spacing=3 (outputs at 0, 3, 6, 9)."""
@@ -409,19 +584,20 @@ self = <test.test_smpo_single_output.TestSMPOMultiOutputBackwardCompat object at
         )
     
         input_mps = make_product_state_mps(L, phys_dim=2)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:203: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=10, indices=23, L=10, max_bond=4)
-tn_vec = SpacedMatrixProductOperator(tensors=10, indices=23, L=10, max_bond=4)
-normalize_on_contract = MatrixProductState(tensors=10, indices=19, L=10, max_bond=1)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=10, indices=19, L=10, max_bond=1)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=10, indices=23, L=10, max_bond=4)
-mps = SpacedMatrixProductOperator(tensors=10, indices=23, L=10, max_bond=4)
+mps = MatrixProductState(tensors=10, indices=19, L=10, max_bond=1)
 spacings = [3, 3, 3, 3], coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=9, indices=20, L=10, max_bond=4), ind = 'k9'
+list_tensors = (Tensor(shape=(4, 2, 1), inds=('bond_0', '__tmp0__', '_3171abAAADb'), tags=oset(['I0'])), Tensor(shape=(4, 4, 1, 1), i...'I4'])), Tensor(shape=(4, 4, 1, 1), inds=('bond_4', 'bond_5', '_3171abAAADf', '_3171abAAADg'), tags=oset(['I5'])), ...)
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -452,14 +628,45 @@ spacings = [3, 3, 3, 3], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:316: AttributeError
 _____ TestSMPOMultiOutputBackwardCompat.test_multi_output_with_random_mps ______
 
-self = <test.test_smpo_single_output.TestSMPOMultiOutputBackwardCompat object at 0x152c7c7a2ba0>
+self = <test.test_smpo_single_output.TestSMPOMultiOutputBackwardCompat object at 0x14fbddbd6fc0>
 
     def test_multi_output_with_random_mps(self):
         """Multi-output with non-trivial input bond dimension."""
@@ -477,19 +684,20 @@ self = <test.test_smpo_single_output.TestSMPOMultiOutputBackwardCompat object at
         )
     
         input_mps = make_random_mps(L, phys_dim=3, bond_dim=4)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:225: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
-tn_vec = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
-normalize_on_contract = MatrixProductState(tensors=10, indices=19, L=10, max_bond=4)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=10, indices=19, L=10, max_bond=4)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
-mps = SpacedMatrixProductOperator(tensors=10, indices=21, L=10, max_bond=4)
+mps = MatrixProductState(tensors=10, indices=19, L=10, max_bond=4)
 spacings = [5, 5], coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=9, indices=18, L=10, max_bond=4), ind = 'k9'
+list_tensors = (Tensor(shape=(4, 3, 4), inds=('bond_0', '__tmp0__', '_3171abAAADu'), tags=oset(['I0'])), Tensor(shape=(4, 4, 4, 4), i...(shape=(4, 4, 3, 4, 4), inds=('bond_4', 'bond_5', '__tmp5__', '_3171abAAADy', '_3171abAAADz'), tags=oset(['I5'])), ...)
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -520,14 +728,45 @@ spacings = [5, 5], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:316: AttributeError
 ___________ TestSMPOSingleOutputLargerBond.test_varying_bond_dim[2] ____________
 
-self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c800027e0>
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x14fbdf443e00>
 bond_dim = 2
 
     @pytest.mark.parametrize("bond_dim", [2, 4, 8, 16])
@@ -547,19 +786,20 @@ bond_dim = 2
         )
     
         input_mps = make_product_state_mps(L, phys_dim=3)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:250: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=2)
-tn_vec = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=2)
-normalize_on_contract = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=2)
-mps = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=2)
-spacings = [7], coordinate_formatter = '{}'
+mps = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1), spacings = [7]
+coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=6, indices=11, L=7, max_bond=2), ind = 'k6'
+list_tensors = (Tensor(shape=(2, 3, 1), inds=('bond_0', '__tmp0__', '_3171abAAAEK'), tags=oset(['I0'])), Tensor(shape=(2, 2, 1, 1), i...'I4'])), Tensor(shape=(2, 2, 1, 1), inds=('bond_4', 'bond_5', '_3171abAAAEO', '_3171abAAAEP'), tags=oset(['I5'])), ...)
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -590,14 +830,55 @@ spacings = [7], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+                            result.normalize()
+                else:
+                    # No next output site: contract leftward into current output
+                    # at position i. This handles the edge case where all remaining
+                    # sites must be absorbed into the single (or last) output site.
+                    rightmost = min(i + S - 1, number_of_sites - 1)
+                    for j in range(rightmost, i, -1):
+                        result.contract_between(tags[j], tags[j - 1])
+                        tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:326: AttributeError
 ___________ TestSMPOSingleOutputLargerBond.test_varying_bond_dim[4] ____________
 
-self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7c725d60>
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x14fbddbd7ec0>
 bond_dim = 4
 
     @pytest.mark.parametrize("bond_dim", [2, 4, 8, 16])
@@ -617,19 +898,20 @@ bond_dim = 4
         )
     
         input_mps = make_product_state_mps(L, phys_dim=3)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:250: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=4)
-tn_vec = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=4)
-normalize_on_contract = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=4)
-mps = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=4)
-spacings = [7], coordinate_formatter = '{}'
+mps = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1), spacings = [7]
+coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=6, indices=11, L=7, max_bond=4), ind = 'k6'
+list_tensors = (Tensor(shape=(4, 3, 1), inds=('bond_0', '__tmp0__', '_3171abAAAEX'), tags=oset(['I0'])), Tensor(shape=(4, 4, 1, 1), i...'I4'])), Tensor(shape=(4, 4, 1, 1), inds=('bond_4', 'bond_5', '_3171abAAAEb', '_3171abAAAEc'), tags=oset(['I5'])), ...)
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -660,14 +942,55 @@ spacings = [7], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+                            result.normalize()
+                else:
+                    # No next output site: contract leftward into current output
+                    # at position i. This handles the edge case where all remaining
+                    # sites must be absorbed into the single (or last) output site.
+                    rightmost = min(i + S - 1, number_of_sites - 1)
+                    for j in range(rightmost, i, -1):
+                        result.contract_between(tags[j], tags[j - 1])
+                        tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:326: AttributeError
 ___________ TestSMPOSingleOutputLargerBond.test_varying_bond_dim[8] ____________
 
-self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7ee466f0>
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x14fbdd6d00e0>
 bond_dim = 8
 
     @pytest.mark.parametrize("bond_dim", [2, 4, 8, 16])
@@ -687,19 +1010,20 @@ bond_dim = 8
         )
     
         input_mps = make_product_state_mps(L, phys_dim=3)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:250: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=8)
-tn_vec = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=8)
-normalize_on_contract = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=8)
-mps = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=8)
-spacings = [7], coordinate_formatter = '{}'
+mps = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1), spacings = [7]
+coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=6, indices=11, L=7, max_bond=8), ind = 'k6'
+list_tensors = (Tensor(shape=(8, 3, 1), inds=('bond_0', '__tmp0__', '_3171abAAAEk'), tags=oset(['I0'])), Tensor(shape=(8, 8, 1, 1), i...'I4'])), Tensor(shape=(8, 8, 1, 1), inds=('bond_4', 'bond_5', '_3171abAAAEo', '_3171abAAAEp'), tags=oset(['I5'])), ...)
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -730,14 +1054,55 @@ spacings = [7], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+                            result.normalize()
+                else:
+                    # No next output site: contract leftward into current output
+                    # at position i. This handles the edge case where all remaining
+                    # sites must be absorbed into the single (or last) output site.
+                    rightmost = min(i + S - 1, number_of_sites - 1)
+                    for j in range(rightmost, i, -1):
+                        result.contract_between(tags[j], tags[j - 1])
+                        tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:326: AttributeError
 ___________ TestSMPOSingleOutputLargerBond.test_varying_bond_dim[16] ___________
 
-self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7eea6d50>
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x14fbdd6d0170>
 bond_dim = 16
 
     @pytest.mark.parametrize("bond_dim", [2, 4, 8, 16])
@@ -757,19 +1122,20 @@ bond_dim = 16
         )
     
         input_mps = make_product_state_mps(L, phys_dim=3)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:250: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=16)
-tn_vec = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=16)
-normalize_on_contract = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=16)
-mps = SpacedMatrixProductOperator(tensors=7, indices=14, L=7, max_bond=16)
-spacings = [7], coordinate_formatter = '{}'
+mps = MatrixProductState(tensors=7, indices=13, L=7, max_bond=1), spacings = [7]
+coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=6, indices=11, L=7, max_bond=16), ind = 'k6'
+list_tensors = (Tensor(shape=(16, 3, 1), inds=('bond_0', '__tmp0__', '_3171abAAAEx'), tags=oset(['I0'])), Tensor(shape=(16, 16, 1, 1)...4'])), Tensor(shape=(16, 16, 1, 1), inds=('bond_4', 'bond_5', '_3171abAAAFB', '_3171abAAAFC'), tags=oset(['I5'])), ...)
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -800,14 +1166,55 @@ spacings = [7], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+                            result.normalize()
+                else:
+                    # No next output site: contract leftward into current output
+                    # at position i. This handles the edge case where all remaining
+                    # sites must be absorbed into the single (or last) output site.
+                    rightmost = min(i + S - 1, number_of_sites - 1)
+                    for j in range(rightmost, i, -1):
+                        result.contract_between(tags[j], tags[j - 1])
+                        tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:326: AttributeError
 __________ TestSMPOSingleOutputLargerBond.test_varying_system_size[3] __________
 
-self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7c7a3b90>
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x14fbdd6d02c0>
 L = 3
 
     @pytest.mark.parametrize("L", [3, 5, 10, 19])
@@ -826,19 +1233,20 @@ L = 3
         )
     
         input_mps = make_product_state_mps(L, phys_dim=3)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:270: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
-tn_vec = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
-normalize_on_contract = MatrixProductState(tensors=3, indices=5, L=3, max_bond=1)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=3, indices=5, L=3, max_bond=1)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
-mps = SpacedMatrixProductOperator(tensors=3, indices=6, L=3, max_bond=4)
-spacings = [3], coordinate_formatter = '{}'
+mps = MatrixProductState(tensors=3, indices=5, L=3, max_bond=1), spacings = [3]
+coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=2, indices=3, L=3, max_bond=4), ind = 'k2'
+list_tensors = (Tensor(shape=(4, 3, 1), inds=('bond_0', '__tmp0__', '_3171abAAAFG'), tags=oset(['I0'])), Tensor(shape=(4, 4, 1, 1), i...bAAAFG', '_3171abAAAFH'), tags=oset(['I1'])), Tensor(shape=(4, 1), inds=('bond_1', '_3171abAAAFH'), tags=oset(['I2'])))
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -869,14 +1277,55 @@ spacings = [3], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+                            result.normalize()
+                else:
+                    # No next output site: contract leftward into current output
+                    # at position i. This handles the edge case where all remaining
+                    # sites must be absorbed into the single (or last) output site.
+                    rightmost = min(i + S - 1, number_of_sites - 1)
+                    for j in range(rightmost, i, -1):
+                        result.contract_between(tags[j], tags[j - 1])
+                        tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:326: AttributeError
 __________ TestSMPOSingleOutputLargerBond.test_varying_system_size[5] __________
 
-self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7c7a3d70>
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x14fbdd6d0410>
 L = 5
 
     @pytest.mark.parametrize("L", [3, 5, 10, 19])
@@ -895,19 +1344,20 @@ L = 5
         )
     
         input_mps = make_product_state_mps(L, phys_dim=3)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:270: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=5, indices=10, L=5, max_bond=4)
-tn_vec = SpacedMatrixProductOperator(tensors=5, indices=10, L=5, max_bond=4)
-normalize_on_contract = MatrixProductState(tensors=5, indices=9, L=5, max_bond=1)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=5, indices=9, L=5, max_bond=1)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=5, indices=10, L=5, max_bond=4)
-mps = SpacedMatrixProductOperator(tensors=5, indices=10, L=5, max_bond=4)
-spacings = [5], coordinate_formatter = '{}'
+mps = MatrixProductState(tensors=5, indices=9, L=5, max_bond=1), spacings = [5]
+coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=4, indices=7, L=5, max_bond=4), ind = 'k4'
+list_tensors = (Tensor(shape=(4, 3, 1), inds=('bond_0', '__tmp0__', '_3171abAAAFN'), tags=oset(['I0'])), Tensor(shape=(4, 4, 1, 1), i...bAAAFP', '_3171abAAAFQ'), tags=oset(['I3'])), Tensor(shape=(4, 1), inds=('bond_3', '_3171abAAAFQ'), tags=oset(['I4'])))
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -938,14 +1388,55 @@ spacings = [5], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+                            result.normalize()
+                else:
+                    # No next output site: contract leftward into current output
+                    # at position i. This handles the edge case where all remaining
+                    # sites must be absorbed into the single (or last) output site.
+                    rightmost = min(i + S - 1, number_of_sites - 1)
+                    for j in range(rightmost, i, -1):
+                        result.contract_between(tags[j], tags[j - 1])
+                        tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:326: AttributeError
 _________ TestSMPOSingleOutputLargerBond.test_varying_system_size[10] __________
 
-self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7c7a3f20>
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x14fbddbd7f20>
 L = 10
 
     @pytest.mark.parametrize("L", [3, 5, 10, 19])
@@ -964,19 +1455,20 @@ L = 10
         )
     
         input_mps = make_product_state_mps(L, phys_dim=3)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:270: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=10, indices=20, L=10, max_bond=4)
-tn_vec = SpacedMatrixProductOperator(tensors=10, indices=20, L=10, max_bond=4)
-normalize_on_contract = MatrixProductState(tensors=10, indices=19, L=10, max_bond=1)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=10, indices=19, L=10, max_bond=1)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=10, indices=20, L=10, max_bond=4)
-mps = SpacedMatrixProductOperator(tensors=10, indices=20, L=10, max_bond=4)
+mps = MatrixProductState(tensors=10, indices=19, L=10, max_bond=1)
 spacings = [10], coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=9, indices=17, L=10, max_bond=4), ind = 'k9'
+list_tensors = (Tensor(shape=(4, 3, 1), inds=('bond_0', '__tmp0__', '_3171abAAAFb'), tags=oset(['I0'])), Tensor(shape=(4, 4, 1, 1), i...'I4'])), Tensor(shape=(4, 4, 1, 1), inds=('bond_4', 'bond_5', '_3171abAAAFf', '_3171abAAAFg'), tags=oset(['I5'])), ...)
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -1007,14 +1499,55 @@ spacings = [10], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+                            result.normalize()
+                else:
+                    # No next output site: contract leftward into current output
+                    # at position i. This handles the edge case where all remaining
+                    # sites must be absorbed into the single (or last) output site.
+                    rightmost = min(i + S - 1, number_of_sites - 1)
+                    for j in range(rightmost, i, -1):
+                        result.contract_between(tags[j], tags[j - 1])
+                        tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:326: AttributeError
 _________ TestSMPOSingleOutputLargerBond.test_varying_system_size[19] __________
 
-self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x152c7c7a3fe0>
+self = <test.test_smpo_single_output.TestSMPOSingleOutputLargerBond object at 0x14fbde2decf0>
 L = 19
 
     @pytest.mark.parametrize("L", [3, 5, 10, 19])
@@ -1033,19 +1566,20 @@ L = 19
         )
     
         input_mps = make_product_state_mps(L, phys_dim=3)
->       output_mps = smpo.apply_mps(smpo, input_mps)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>       output_mps = smpo.apply_mps(input_mps)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 test/test_smpo_single_output.py:270: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 tn_op = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=4)
-tn_vec = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=4)
-normalize_on_contract = MatrixProductState(tensors=19, indices=37, L=19, max_bond=1)
-compress = False, compress_opts = {}
+tn_vec = MatrixProductState(tensors=19, indices=37, L=19, max_bond=1)
+normalize_on_contract = True, compress = False, compress_opts = {}
 smpo = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=4)
-mps = SpacedMatrixProductOperator(tensors=19, indices=38, L=19, max_bond=4)
+mps = MatrixProductState(tensors=19, indices=37, L=19, max_bond=1)
 spacings = [19], coordinate_formatter = '{}'
+result = TensorNetwork1D(tensors=18, indices=35, L=19, max_bond=4), ind = 'k18'
+list_tensors = (Tensor(shape=(4, 3, 1), inds=('bond_0', '__tmp0__', '_3171abAAAGD'), tags=oset(['I0'])), Tensor(shape=(4, 4, 1, 1), i...'I4'])), Tensor(shape=(4, 4, 1, 1), inds=('bond_4', 'bond_5', '_3171abAAAGH', '_3171abAAAGI'), tags=oset(['I5'])), ...)
 
     def apply_mps(tn_op, tn_vec, normalize_on_contract=True, compress=False, **compress_opts):
         """Version of :func:`quimb.tensor.tensor_1d.MatrixProductOperator._apply_mps()` for :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -1076,11 +1610,52 @@ spacings = [19], coordinate_formatter = '{}'
         # align the indices
         coordinate_formatter = qu.tensor.tensor_arbgeom.get_coordinate_formatter(smpo._NDIMS)
         smpo.lower_ind_id = f"__tmp{coordinate_formatter}__"
->       smpo.upper_ind_id = mps.site_ind_id
-                            ^^^^^^^^^^^^^^^
-E       AttributeError: 'SpacedMatrixProductOperator' object has no attribute 'site_ind_id'. Did you mean: 'site_tag_id'?
+        smpo.upper_ind_id = mps.site_ind_id
+    
+        result = smpo | mps
+    
+        for ind in mps.outer_inds():
+            result.contract_ind(ind=ind)
+    
+        list_tensors = result.tensors
+        number_of_sites = len(list_tensors)
+        tags = list(qtn.tensor_core.get_tags(result))
+    
+        i = 0
+        for S in spacings:
+            if S > 1:
+                tags_to_drop = []
+                # Determine if there is a next output site to the right
+                next_output_exists = (i + S < number_of_sites)
+    
+                if next_output_exists:
+                    # Contract rightward into the next output site
+                    for j in range(i + 1, i + S):
+                        if j >= number_of_sites - 1:
+                            break
+                        if len(list(list_tensors[j].tags)) > 1:
+                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                            for tag in list(list_tensors[j].tags):
+                                tags_to_drop.extend([tag])
+                        else:
+                            result.contract_between(tags[j], tags[j + 1])
+                            tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+                            result.normalize()
+                else:
+                    # No next output site: contract leftward into current output
+                    # at position i. This handles the edge case where all remaining
+                    # sites must be absorbed into the single (or last) output site.
+                    rightmost = min(i + S - 1, number_of_sites - 1)
+                    for j in range(rightmost, i, -1):
+                        result.contract_between(tags[j], tags[j - 1])
+                        tags_to_drop.extend([tags[j]])
+                        if normalize_on_contract:
+>                           result.normalize()
+                            ^^^^^^^^^^^^^^^^
+E                           AttributeError: 'TensorNetwork1D' object has no attribute 'normalize'
 
-tn4ml/models/smpo.py:285: AttributeError
+tn4ml/models/smpo.py:326: AttributeError
 =============================== warnings summary ===============================
 test/test_smpo_single_output.py: 16 warnings
   /lus/eagle/projects/ATLAS_workflow_ALCF/sagar/conda/envs/QiML/lib/python3.12/site-packages/jax/_src/nn/initializers.py:170: UserWarning: Explicitly requested dtype <class 'jax.numpy.float64'>  is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
@@ -1099,7 +1674,6 @@ test/test_smpo_single_output.py: 16 warnings
 FAILED test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_product_state
 FAILED test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_random_mps
 FAILED test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_small
-FAILED test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_no_normalize
 FAILED test/test_smpo_single_output.py::TestSMPOSingleOutput::test_single_output_norm_is_finite
 FAILED test/test_smpo_single_output.py::TestSMPOMultiOutputBackwardCompat::test_multi_output_spacing5
 FAILED test/test_smpo_single_output.py::TestSMPOMultiOutputBackwardCompat::test_multi_output_spacing3
@@ -1112,4 +1686,4 @@ FAILED test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_var
 FAILED test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_system_size[5]
 FAILED test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_system_size[10]
 FAILED test/test_smpo_single_output.py::TestSMPOSingleOutputLargerBond::test_varying_system_size[19]
-======================= 16 failed, 48 warnings in 17.47s =======================
+================== 15 failed, 1 passed, 48 warnings in 18.94s ==================
