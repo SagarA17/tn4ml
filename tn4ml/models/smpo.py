@@ -355,43 +355,54 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
             result.fuse_multibonds_()
 
         # Contract sites between outputs and trailing sites
+        #
+        # spacings contains two kinds of entries:
+        #   - Inter-output gaps (first n_outputs - 1 entries): i+S is the next output
+        #   - Trailing gap (optional last entry): sites after the final output,
+        #     must be contracted leftward into the last output
+        n_outputs = len(list(smpo.lower_inds))
+        n_inter_output = n_outputs - 1
+
         i = leading_gap
-        for S in spacings:
-            if S > 1:
-                tags_to_drop = []
-                # Determine if there is a next output site to the right
-                next_output_exists = (i + S < number_of_sites)
+        for s_idx, S in enumerate(spacings):
+            if S < 1:
+                continue
 
-                if next_output_exists:
-                    # Contract rightward into the next output site
-                    for j in range(i + 1, i + S):
-                        if j >= number_of_sites - 1:
-                            break
-                        if len(list(list_tensors[j].tags)) > 1:
-                            result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
-                            for tag in list(list_tensors[j].tags):
-                                tags_to_drop.extend([tag])
-                        else:
-                            result.contract_between(tags[j], tags[j + 1])
-                            tags_to_drop.extend([tags[j]])
-                        if normalize_on_contract:
-                            result.normalize()
-                else:
-                    # No next output site: contract leftward into current output
-                    # at position i. This handles the edge case where all remaining
-                    # sites must be absorbed into the single (or last) output site.
-                    rightmost = min(i + S - 1, number_of_sites - 1)
-                    for j in range(rightmost, i, -1):
-                        result.contract_between(tags[j], tags[j - 1])
+            tags_to_drop = []
+            is_trailing = (s_idx >= n_inter_output)
+
+            if not is_trailing:
+                # Contract rightward into the next output site at position i+S.
+                # Non-output sites between i and i+S are at positions i+1 ... i+S-1.
+                # When S == 1, this range is empty (adjacent outputs, nothing between).
+                for j in range(i + 1, i + S):
+                    if j >= number_of_sites - 1:
+                        break
+                    if len(list(list_tensors[j].tags)) > 1:
+                        result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                        for tag in list(list_tensors[j].tags):
+                            tags_to_drop.extend([tag])
+                    else:
+                        result.contract_between(tags[j], tags[j + 1])
                         tags_to_drop.extend([tags[j]])
-                        if normalize_on_contract:
-                            result.normalize()
+                    if normalize_on_contract:
+                        result.normalize()
+            else:
+                # No next output site: contract all trailing sites leftward
+                # into the current output at position i.
+                # Trailing sites are at positions i+1 ... min(i+S, number_of_sites-1).
+                rightmost = min(i + S, number_of_sites - 1)
+                for j in range(rightmost, i, -1):
+                    result.contract_between(tags[j], tags[j - 1])
+                    tags_to_drop.extend([tags[j]])
+                    if normalize_on_contract:
+                        result.normalize()
 
-                if i + 1 == len(tags):
-                    # if last site of smpo has output_ind
-                    break
-                result.drop_tags(tags_to_drop)
-                i = i + S
+            if i + 1 == len(tags):
+                # if last site of smpo has output_ind
+                break
+            result.drop_tags(tags_to_drop)
+            i = i + S
 
             result.fuse_multibonds_()
         
@@ -749,7 +760,7 @@ def SMPO_initialize(L: int,
                     copy_tensor.at[:, :, 0, :].set(identity)
                     tensor = copy_tensor
                 
-        if boundary == 'obc':
+        if boundary == 'obc' and shape_method != 'even':
             aux_tensor = jnp.zeros(tensor.shape, dtype=dtype)
             if len(tensor.shape) == 3:
                 if i == 1:
