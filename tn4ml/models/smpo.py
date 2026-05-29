@@ -566,8 +566,10 @@ def generate_shape(method: str,
         Number of tensors.
     has_out : bool
         Flag indicating does this tensor have an output index.
-    bond_dim : int
+    bond_dim : int or tuple(int, int)
         Dimension of virtual indices between tensors. *Default = 4*.
+        For ``method='even'`` a tuple ``(chi_left, chi_right)`` may be passed
+        to support non-uniform bond dimensions on a per-site basis.
     phys_dim :  tuple(int, int)
         Dimension of physical indices for individual tensor - *up* and *down*.
     cyclic : bool
@@ -580,23 +582,28 @@ def generate_shape(method: str,
     -------
         tuple
     """
-        
+
     if method == 'even':
-        # supported both for cyclic and non-cyclic
-            if has_out:
-                shape = (bond_dim, bond_dim, *phys_dim)
-                if not cyclic:
-                    if position == 1:
-                        shape = (1, bond_dim, *phys_dim)
-                    if position == L:
-                        shape = (bond_dim, 1, *phys_dim)
-            else:
-                shape = (bond_dim, bond_dim, phys_dim[0])
-                if position == 1 and not cyclic:
-                    shape = (1, bond_dim, phys_dim[0])
-                if position == L and not cyclic:
-                    shape = (bond_dim, 1, phys_dim[0])
+        if isinstance(bond_dim, tuple):
+            chi_left, chi_right = bond_dim
+        else:
+            chi_left = chi_right = bond_dim
+
+        if not cyclic:
+            if position == 1:
+                chi_left = 1
+            if position == L:
+                chi_right = 1
+
+        if has_out:
+            shape = (chi_left, chi_right, *phys_dim)
+        else:
+            shape = (chi_left, chi_right, phys_dim[0])
     else:
+        if isinstance(bond_dim, tuple):
+            raise NotImplementedError(
+                "Non-uniform per-bond dimensions are only supported with shape_method='even'."
+            )
         assert not cyclic
         if position > L // 2:
             j = (L + 1 - abs(2*position - L - 1)) // 2
@@ -631,7 +638,7 @@ def SMPO_initialize(L: int,
             dtype: Any = jnp.float_,
             shape_method: str = 'even',
             spacing: int = 2,
-            bond_dim: int = 4,
+            bond_dim = 4,
             phys_dim: Tuple[int, int] = (2, 2),
             output_inds: Collection = [],
             add_identity: bool = False,
@@ -660,8 +667,12 @@ def SMPO_initialize(L: int,
     spacing : int
         Spacing parameter, or space between output indices in number of sites. 
         Used when output_inds is not provided. *Default = 2*.
-    bond_dim : int
+    bond_dim : int or list[int]
         Dimension of virtual indices between tensors. *Default = 4*.
+        If a list of length ``L - 1`` is passed, ``bond_dim[i]`` is the
+        dimension of the bond between sites ``i`` and ``i + 1`` (0-indexed).
+        Non-uniform bonds require ``shape_method='even'`` and are not
+        supported with ``cyclic=True``.
     phys_dim :  tuple(int, int)
         Dimension of physical indices for individual tensor - *up* and *down*.
     output_inds : array of int
@@ -691,6 +702,39 @@ def SMPO_initialize(L: int,
     
     if cyclic and shape_method != 'even':
         raise NotImplementedError("Change shape_method to 'even'.")
+
+    # Normalize bond_dim into a per-bond list (length L - 1) plus a scalar fallback.
+    if isinstance(bond_dim, (list, tuple)):
+        bond_dim_list = list(bond_dim)
+        if len(bond_dim_list) != L - 1:
+            raise ValueError(
+                f"bond_dim list must have length L - 1 = {L - 1}, got {len(bond_dim_list)}."
+            )
+        if any((not isinstance(b, int)) or b < 1 for b in bond_dim_list):
+            raise ValueError(f"All bond_dim entries must be positive ints, got {bond_dim_list}.")
+        if shape_method != 'even':
+            raise NotImplementedError(
+                "Per-bond bond_dim list is only supported with shape_method='even'."
+            )
+        if cyclic:
+            raise NotImplementedError(
+                "Per-bond bond_dim list is not supported with cyclic=True."
+            )
+        bond_dim_scalar = max(bond_dim_list)
+        nonuniform_bonds = True
+    else:
+        bond_dim_list = None
+        bond_dim_scalar = bond_dim
+        nonuniform_bonds = False
+
+    def _bond_pair(pos_1based: int):
+        """Return (chi_left, chi_right) for the site at 1-indexed position."""
+        if bond_dim_list is None:
+            return bond_dim_scalar
+        # Site i (1-indexed) sits between bonds (i-2) and (i-1) in the 0-indexed list.
+        chi_left = bond_dim_list[pos_1based - 2] if pos_1based >= 2 else bond_dim_scalar
+        chi_right = bond_dim_list[pos_1based - 1] if pos_1based <= L - 1 else bond_dim_scalar
+        return (chi_left, chi_right)
 
     # Validate output_inds if provided
     if len(output_inds) != 0:
@@ -738,7 +782,7 @@ def SMPO_initialize(L: int,
             if has_out:
                 out_index+=1
 
-        shape = generate_shape(shape_method, L, has_out, bond_dim, phys_dim, cyclic, i, spacing)
+        shape = generate_shape(shape_method, L, has_out, _bond_pair(i), phys_dim, cyclic, i, spacing)
 
         tensor = initializer(key, shape, dtype)
 
@@ -783,12 +827,17 @@ def SMPO_initialize(L: int,
         tensors.append(jnp.squeeze(tensor)/jnp.linalg.norm(tensor))
     
     if insert and insert < L and shape_method == 'even':
-        tensors[insert] /= np.sqrt(min(bond_dim, phys_dim[0]))
-    
+        tensors[insert] /= np.sqrt(min(bond_dim_scalar, phys_dim[0]))
+
     smpo = SpacedMatrixProductOperator(tensors, output_inds=output_inds, **kwargs)
 
     if compress:
-        smpo.compress(form="flat", max_bond=bond_dim)  # limit bond_dim
+        if nonuniform_bonds:
+            raise ValueError(
+                "compress=True is incompatible with non-uniform bond_dim; "
+                "the truncation step would clip every bond to a single value."
+            )
+        smpo.compress(form="flat", max_bond=bond_dim_scalar)  # limit bond_dim
 
     if L > 200:  # for large systems
         for i, tensor in enumerate(smpo.tensors):
