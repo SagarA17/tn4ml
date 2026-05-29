@@ -14,6 +14,40 @@ from .model import Model
 from ..initializers import *
 from ..util import return_digits
 
+def compute_tapered_bond(position: int, L: int, max_bond: int, min_bond: int = 1) -> int:
+    """
+    Compute tapered bond dimension at a given position (SYMMETRIC version).
+    
+    Bond dims increase linearly from edges toward center, symmetrically.
+    
+    Args:
+        position: Bond index (0 to L-2), where bond_i connects site_i and site_{i+1}
+        L: Total number of sites
+        max_bond: Maximum bond dimension (at center)
+        min_bond: Minimum bond dimension (at edges)
+    
+    Returns:
+        Bond dimension at this position
+    """
+    num_bonds = L - 1
+    
+    # Distance from nearest edge (0-indexed bonds: 0, 1, 2, ..., L-2)
+    dist_from_edge = min(position, num_bonds - 1 - position)
+    
+    # Maximum possible distance from edge (at center)
+    max_dist_from_edge = num_bonds / 2.0 - 0.5
+    
+    # Normalized progress from edge to center (0 at edge, 1 at center)
+    if max_dist_from_edge > 0:
+        t = dist_from_edge / max_dist_from_edge
+        t = min(t, 1.0)
+    else:
+        t = 0
+    
+    # Linear interpolation
+    bond = int(round(min_bond + t * (max_bond - min_bond)))
+    return max(min_bond, min(max_bond, bond))
+
 def sort_tensors(tn: qtn.TensorNetwork) -> tuple:
     """Helper function for sorting tensors of tensor network in alphabetic order by tags.
 
@@ -555,6 +589,8 @@ def generate_shape(method: str,
                 cyclic: bool = False,
                 position: int = None,
                 spacing: int = None,
+                taper: bool = False,
+                min_bond: int = 1,
                 ) -> tuple:
     """Returns a shape of tensor .
 
@@ -580,22 +616,34 @@ def generate_shape(method: str,
     -------
         tuple
     """
+
+    # Apply tapering if requested
+    if taper and method == 'even':
+        # position is 1-indexed in this function
+        # left bond connects position-1 to position (0-indexed: position-2 to position-1)
+        # right bond connects position to position+1 (0-indexed: position-1 to position)
+        left_bond = compute_tapered_bond(position - 2, L, bond_dim, min_bond) if position > 1 else 1
+        right_bond = compute_tapered_bond(position - 1, L, bond_dim, min_bond) if position < L else 1
+        bond_dim_left = left_bond
+        bond_dim_right = right_bond
+    else:
+        bond_dim_left = bond_dim
+        bond_dim_right = bond_dim
         
     if method == 'even':
-        # supported both for cyclic and non-cyclic
-            if has_out:
-                shape = (bond_dim, bond_dim, *phys_dim)
-                if not cyclic:
-                    if position == 1:
-                        shape = (1, bond_dim, *phys_dim)
-                    if position == L:
-                        shape = (bond_dim, 1, *phys_dim)
-            else:
-                shape = (bond_dim, bond_dim, phys_dim[0])
-                if position == 1 and not cyclic:
-                    shape = (1, bond_dim, phys_dim[0])
-                if position == L and not cyclic:
-                    shape = (bond_dim, 1, phys_dim[0])
+        if has_out:
+            shape = (bond_dim_left, bond_dim_right, *phys_dim)
+            if not cyclic:
+                if position == 1:
+                    shape = (1, bond_dim_right, *phys_dim)
+                if position == L:
+                    shape = (bond_dim_left, 1, *phys_dim)
+        else:
+            shape = (bond_dim_left, bond_dim_right, phys_dim[0])
+            if position == 1 and not cyclic:
+                shape = (1, bond_dim_right, phys_dim[0])
+            if position == L and not cyclic:
+                shape = (bond_dim_left, 1, phys_dim[0])
     else:
         assert not cyclic
         if position > L // 2:
@@ -641,6 +689,8 @@ def SMPO_initialize(L: int,
             compress: bool = False,
             insert: int = None,
             canonical_center: int = None,
+            taper: bool = False,
+            min_bond: int = 1,
             **kwargs) -> SpacedMatrixProductOperator:
     
     """Generates :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`.
@@ -738,7 +788,7 @@ def SMPO_initialize(L: int,
             if has_out:
                 out_index+=1
 
-        shape = generate_shape(shape_method, L, has_out, bond_dim, phys_dim, cyclic, i, spacing)
+        shape = generate_shape(shape_method, L, has_out, bond_dim, phys_dim, cyclic, i, spacing, taper=taper, min_bond=min_bond)
 
         tensor = initializer(key, shape, dtype)
 
@@ -785,6 +835,8 @@ def SMPO_initialize(L: int,
     if insert and insert < L and shape_method == 'even':
         tensors[insert] /= np.sqrt(min(bond_dim, phys_dim[0]))
     
+    kwargs.pop('taper', None)    # already consumed above, don't pass to TN
+    kwargs.pop('min_bond', None) # already consumed above, don't pass to TN
     smpo = SpacedMatrixProductOperator(tensors, output_inds=output_inds, **kwargs)
 
     if compress:
