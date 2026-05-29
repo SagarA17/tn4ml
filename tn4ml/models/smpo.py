@@ -824,7 +824,15 @@ def SMPO_initialize(L: int,
                     # Right node
                     aux_tensor = aux_tensor.at[0,:,:,:].set(tensor[0,:,:,:])
                     tensor = aux_tensor
-        tensors.append(jnp.squeeze(tensor)/jnp.linalg.norm(tensor))
+        # Squeeze ONLY the boundary singleton bond axis(es) for OBC.
+        # A blanket jnp.squeeze (no axis) would also drop any interior bond
+        # with chi=1, breaking the index/shape match downstream.
+        if not cyclic and tensor.ndim >= 3:
+            if i == 1 and tensor.shape[0] == 1:
+                tensor = jnp.squeeze(tensor, axis=0)
+            elif i == L and tensor.shape[1] == 1:
+                tensor = jnp.squeeze(tensor, axis=1)
+        tensors.append(tensor / jnp.linalg.norm(tensor))
     
     if insert and insert < L and shape_method == 'even':
         tensors[insert] /= np.sqrt(min(bond_dim_scalar, phys_dim[0]))
