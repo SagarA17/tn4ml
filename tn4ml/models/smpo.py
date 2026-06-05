@@ -279,6 +279,59 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
     def get_orders(self) -> list:
         return self._orders
 
+    def output_overlap(self) -> jnp.ndarray:
+        """Contract this SMPO with its conjugate over input legs and bonds,
+        returning ``W W^T`` as a small dense matrix.
+
+        ``W`` is this SMPO viewed as a linear map ``H_in -> H_out`` with
+        ``H_in = (R^p_in)^L`` and ``H_out`` the tensor product of the output
+        leg dimensions.  The two sets of output legs are kept distinct so the
+        contraction yields a (d_out, d_out) matrix rather than a scalar.
+
+        Currently implemented for the single-output case (one entry in
+        ``output_inds``).  JAX-traceable: builds new ``Tensor`` objects from the
+        SMPO's underlying arrays and contracts via quimb's autoray dispatch,
+        so gradients flow through the result.
+        """
+        if len(self._output_inds) != 1:
+            raise NotImplementedError(
+                "output_overlap is only implemented for single-output SMPO."
+            )
+
+        output_pos = self._output_inds[0]
+        output_lbl = self._lower_ind_id.format(output_pos)
+        output_lbl_dag = output_lbl + "_dag"
+
+        ket_tensors = [
+            qtn.Tensor(data=t.data, inds=tuple(t.inds), tags=set(t.tags))
+            for t in self.tensors
+        ]
+
+        bra_tensors = []
+        for t in self.tensors:
+            new_inds = []
+            for ind in t.inds:
+                if ind == output_lbl:
+                    new_inds.append(output_lbl_dag)
+                elif ind.startswith("bond"):
+                    new_inds.append(ind + "_dag")
+                else:
+                    new_inds.append(ind)
+            bra_tensors.append(
+                qtn.Tensor(
+                    data=jnp.conj(t.data),
+                    inds=tuple(new_inds),
+                    tags=set(t.tags),
+                )
+            )
+
+        full_tn = qtn.TensorNetwork(ket_tensors + bra_tensors)
+        result = full_tn.contract(
+            output_inds=(output_lbl, output_lbl_dag),
+            optimize="auto",
+        )
+        return result.data
+
     # def copy(self):
     #     """Copies the model.
         
