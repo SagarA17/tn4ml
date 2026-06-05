@@ -1265,6 +1265,35 @@ class PatchAmplitudeEmbedding(BasePatchEmbedding):
         
         return padded_statevector, n_qubits
 
+class ParticleVectorEmbedding(Embedding):
+    """Particle vector embedding for grouped (pt, eta, phi) features."""
+    
+    def __init__(self, normalize: bool = False, **kwargs):
+        self.normalize = normalize
+        self.group_size = 3
+        super().__init__(**kwargs)
+    
+    @property
+    def dim(self) -> int:
+        return 3
+    
+    @property
+    def input_dim(self) -> int:
+        return 3
+    
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        """Apply particle vector embedding.
+        
+        Expects a single particle's features [pt, eta, phi] as input.
+        Returns them as-is (or normalized) as a 1D array.
+        """
+        # Ensure input is an array
+        x = jnp.asarray(x)
+        if self.normalize:
+            norm = jnp.linalg.norm(x)
+            return jnp.where(norm > 0, x / norm, x)
+        else:
+            return x
 
 def embed(x: onp.ndarray, phi: Union[Embedding, ComplexEmbedding, StateVectorToMPSEmbedding], **mps_opts) -> qtn.MatrixProductState:
     """Create product state from feature vector.
@@ -1294,7 +1323,13 @@ def embed(x: onp.ndarray, phi: Union[Embedding, ComplexEmbedding, StateVectorToM
         raise TypeError('Invalid embedding type')
     
     if issubclass(type(phi), Embedding):
-        arrays = [phi(xi).reshape((1, 1, phi.dim)) for xi in x]
+        if hasattr(phi, 'group_size') and phi.group_size > 1:
+            x_reshaped = x.reshape(-1, phi.group_size)
+            arrays = [phi(x_reshaped[i]).reshape((1, 1, phi.dim)) 
+                    for i in range(x_reshaped.shape[0])]
+        else:
+            arrays = [phi(xi).reshape((1, 1, phi.dim)) for xi in x]
+
         for i in [0, -1]:
             arrays[i] = arrays[i].reshape((1, phi.dim))
         mps = qtn.MatrixProductState(arrays, **mps_opts)
@@ -1325,7 +1360,8 @@ def embed(x: onp.ndarray, phi: Union[Embedding, ComplexEmbedding, StateVectorToM
                 mps.left_canonize_site(i)
     else:
         norm = mps.norm()
+        norm_factor = jnp.where(norm > 1e-10, jnp.power(norm, 1 / len(mps.tensors)), 1.0)
         for tensor in mps.tensors:
-            tensor.modify(data=tensor.data / jnp.power(norm, 1 / len(mps.tensors)))
+            tensor.modify(data=tensor.data / norm_factor)
 
     return mps

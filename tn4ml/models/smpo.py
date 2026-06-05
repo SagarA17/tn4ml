@@ -37,7 +37,7 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
     See :class:`quimb.tensor.tensor_1d.MatrixProductOperator` for explanation of other attributes and methods.
     """
 
-    _EXTRA_PROPS = ("_site_tag_id", "_upper_ind_id", "_lower_ind_id", "_L", "_spacing", "_orders", "_spacings", "cyclic")
+    _EXTRA_PROPS = ("_site_tag_id", "_upper_ind_id", "_lower_ind_id", "_L", "_spacing", "_orders", "_spacings", "_output_inds", "_leading_gap", "cyclic")
 
     def __init__(self, arrays, output_inds=[], shape="lrud", site_tag_id="I{}", tags=None, upper_ind_id="k{}", lower_ind_id="b{}", bond_name="bond{}", **tn_opts) -> None:
         """
@@ -48,7 +48,10 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
         arrays : tuple of array_like
             The arrays defining the operator.
         output_inds : array of int
-            Indexes of tensors which have output indices. From 0 to n. If spacing is not even.
+            Indices of tensors which have output indices (0-indexed).
+            Can be arbitrary positions, e.g. [9] for single center output,
+            or [3, 9, 15] for multiple outputs. If empty, spacing is inferred
+            from array dimensions (backward compatible behavior).
         shape : str
             The shape of the tensors, e.g. 'lurd' or 'lrud'.
         site_tag_id : str
@@ -85,18 +88,31 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
             tags = (tags,) if isinstance(tags, str) else tuple(tags)
             site_tags = tuple((st,) + tags for st in site_tags)
 
-        self.cyclic = qtn.array_ops.ndim(arrays[0]) == 4
+        self.cyclic = qtn.array_ops.ndim(arrays[0]) == 4 or (output_inds and 0 in output_inds and qtn.array_ops.ndim(arrays[0]) == 3)
+        
+        # Determine cyclic from array structure more carefully
+        # For cyclic: first tensor has left bond, so even without output it's 3D, with output it's 4D
+        # For non-cyclic: first tensor has no left bond, so without output it's 2D (after squeeze), with output it's 3D
+        if output_inds:
+            if 0 in output_inds:
+                self.cyclic = qtn.array_ops.ndim(arrays[0]) == 4
+            else:
+                self.cyclic = qtn.array_ops.ndim(arrays[0]) == 3
+        else:
+            self.cyclic = qtn.array_ops.ndim(arrays[0]) == 4
+        
         dims = [x.ndim for x in arrays]
 
-        # if spacing is not even
+        self._output_inds = list(output_inds) if output_inds else []
+
         if output_inds:
-            lower_inds = map(lower_ind_id.format, output_inds)
             self._spacing = 0
+            self._leading_gap = output_inds[0]
             self._spacings = [(o - output_inds[i]) for i, o in enumerate(output_inds[1:])]
             if (len(arrays) - 1 - output_inds[-1]) != 0:
                 self._spacings.append(len(arrays) - 1 - output_inds[-1])
         else:
-            # enable spacing == (to have one output)
+            self._leading_gap = 0
             if dims.count(4) == 0:
                 if dims[-1] != 3:
                     self._spacing = self.L
@@ -111,71 +127,77 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
                 self._spacing = dims.index(4, dims.index(4) + 1) - dims.index(4)
             self._spacings=[]
             lower_inds = map(lower_ind_id.format, range(0, self.L, self.spacing))
+            self._output_inds = list(range(0, self.L, self.spacing))
 
-        # process orders
-        lu_ord = tuple(shape.replace("r", "").replace("d", "").find(x) for x in "lu")
-        lud_ord = tuple(shape.replace("r", "").find(x) for x in "lud")
-        rud_ord = tuple(shape.replace("l", "").find(x) for x in "rud")
-        lru_ord = tuple(shape.replace("u", "").find(x) for x in "lru")
-        lrud_ord = tuple(map(shape.find, "lrud"))
-
-        if self.cyclic:
-            if output_inds:
-                if (self.L - 1) in output_inds:
-                    last_ord = lrud_ord
-                else:
-                    last_ord = lru_ord
-            else:
-                if (self.L - 1) % self.spacing == 0:
-                    last_ord = lrud_ord
-                else:
-                    last_ord = lru_ord
+        # Determine which sites have outputs
+        if output_inds:
+            has_output_at = set(output_inds)
         else:
-            if output_inds:
-                if (self.L - 1) in output_inds:
-                    last_ord = lud_ord
-                else:
-                    last_ord = lu_ord
-            else:
-                if (self.L - 1) % self.spacing == 0:
-                    last_ord = lud_ord
-                else:
-                    last_ord = lu_ord
+            has_output_at = set(range(0, self.L, self.spacing))
 
-        # orders = [rud_ord if not self.cyclic else lrud_ord, *[lrud_ord for i in range(1, self.L - 1)], last_ord]
-        orders = [rud_ord if not self.cyclic else lrud_ord, *[lrud_ord if (output_inds and (i in output_inds)) or (self.spacing and i % self.spacing == 0) else lru_ord for i in range(1, self.L - 1)], last_ord]
+        # Build orders based on ACTUAL tensor dimensions
+        orders = []
+        for i, arr in enumerate(arrays):
+            ndim = arr.ndim
+            if ndim == 4:
+                orders.append(tuple(map(shape.find, "lrud")))
+            elif ndim == 3:
+                if i == 0 and not self.cyclic:
+                    orders.append(tuple(shape.replace("l", "").find(x) for x in "rud"))
+                elif i == self.L - 1 and not self.cyclic:
+                    if i in has_output_at:
+                        orders.append(tuple(shape.replace("r", "").find(x) for x in "lud"))
+                    else:
+                        orders.append(tuple(shape.replace("r", "").replace("d", "").find(x) for x in "lu"))
+                else:
+                    if i in has_output_at:
+                        orders.append(tuple(map(shape.find, "lrud"))[:3])
+                    else:
+                        orders.append(tuple(shape.replace("d", "").find(x) for x in "lru"))
+            elif ndim == 2:
+                if i == 0:
+                    orders.append(tuple(shape.replace("l", "").replace("d", "").find(x) for x in "ru"))
+                elif i == self.L - 1:
+                    orders.append(tuple(shape.replace("r", "").replace("d", "").find(x) for x in "lu"))
+                else:
+                    orders.append((0, 1))
+            else:
+                orders.append(tuple(range(ndim)))
+        
         self._orders = orders
 
-        # process inds
+        # Build indices
         bond_ids = list(range(0, self.L))
-        # cyc_bond = (qtn.rand_uuid(base=bond_name),) if self.cyclic else ()
         cyc_bond = (f"bond_{self.L}",) if self.cyclic else ()
-        # nbond = qtn.rand_uuid(base=bond_name)
         nbond = f"bond_{bond_ids[0]}"
 
-        inds = []
-        inds += [(*cyc_bond, nbond, next(upper_inds), next(lower_inds))]
+        lower_inds_list = list(map(lower_ind_id.format, self._output_inds))
+        lower_inds_iter = iter(lower_inds_list)
+
+        if 0 in has_output_at:
+            first_lower = [next(lower_inds_iter)]
+        else:
+            first_lower = []
+        inds = [(*cyc_bond, nbond, next(upper_inds), *first_lower)]
         pbond = nbond
 
         for i in range(1, self.L - 1):
             nbond = f"bond_{bond_ids[i]}"
-            if output_inds:
-                if i in output_inds:
-                    curr_down_id = [lower_ind_id.format(i)]
-                else:
-                    curr_down_id = []
+            if i in has_output_at:
+                curr_down_id = [next(lower_inds_iter)]
             else:
-                if i % self.spacing == 0:
-                    curr_down_id = [lower_ind_id.format(i)]
-                else:
-                    curr_down_id = []
-
+                curr_down_id = []
             inds += [(pbond, nbond, next(upper_inds), *curr_down_id)]
             pbond = nbond
 
-        last_down_ind = [lower_ind_id.format(self.L - 1)] if (output_inds and ((self.L-1) in output_inds)) or (self.spacing and ((self.L - 1) % self.spacing == 0)) else []
-        inds += [(pbond, *cyc_bond, next(upper_inds), *last_down_ind)]
-        tensors = [qtn.Tensor(data=a.transpose(array, order), inds=ind, tags=site_tag) for array, site_tag, ind, order in zip(arrays, site_tags, inds, orders)]
+        if (self.L - 1) in has_output_at:
+            last_lower = [next(lower_inds_iter)]
+        else:
+            last_lower = []
+        inds += [(pbond, *cyc_bond, next(upper_inds), *last_lower)]
+        
+        tensors = [qtn.Tensor(data=a.transpose(array, order), inds=ind, tags=site_tag) 
+                for array, site_tag, ind, order in zip(arrays, site_tags, inds, orders)]
         qtn.TensorNetwork.__init__(self, tensors, virtual=True, **tn_opts)
 
     def normalize(self, insert=None, output_inds=None) -> None:
@@ -223,22 +245,92 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
 
     @property
     def spacing(self) -> int:
-        """Spacing paramater, or space between output indices in number of sites.
+        """Spacing parameter, or space between output indices in number of sites.
+        Returns 0 if non-uniform spacing (output_inds) was used.
         """
         return self._spacing
     
     @property
     def spacings(self) -> list:
-        """Spacings paramater, or space between output indices in number of sites.
+        """Spacings parameter: gaps between consecutive outputs and trailing gap.
+        Does not include leading gap (use leading_gap property).
         """
         return self._spacings
+    
+    @property
+    def leading_gap(self) -> int:
+        """Number of sites before the first output.
+        Zero if first output is at position 0.
+        """
+        return self._leading_gap
+    
+    @property
+    def output_positions(self) -> list:
+        """List of site indices that have outputs."""
+        return self._output_inds
 
     @property
     def lower_inds(self):
-        return map(self.lower_ind, range(0, self.L, self.spacing))
+        if self._output_inds:
+            return map(self.lower_ind, self._output_inds)
+        else:
+            return map(self.lower_ind, range(0, self.L, self.spacing))
 
     def get_orders(self) -> list:
         return self._orders
+
+    def output_overlap(self) -> jnp.ndarray:
+        """Contract this SMPO with its conjugate over input legs and bonds,
+        returning ``W W^T`` as a small dense matrix.
+
+        ``W`` is this SMPO viewed as a linear map ``H_in -> H_out`` with
+        ``H_in = (R^p_in)^L`` and ``H_out`` the tensor product of the output
+        leg dimensions.  The two sets of output legs are kept distinct so the
+        contraction yields a (d_out, d_out) matrix rather than a scalar.
+
+        Currently implemented for the single-output case (one entry in
+        ``output_inds``).  JAX-traceable: builds new ``Tensor`` objects from the
+        SMPO's underlying arrays and contracts via quimb's autoray dispatch,
+        so gradients flow through the result.
+        """
+        if len(self._output_inds) != 1:
+            raise NotImplementedError(
+                "output_overlap is only implemented for single-output SMPO."
+            )
+
+        output_pos = self._output_inds[0]
+        output_lbl = self._lower_ind_id.format(output_pos)
+        output_lbl_dag = output_lbl + "_dag"
+
+        ket_tensors = [
+            qtn.Tensor(data=t.data, inds=tuple(t.inds), tags=set(t.tags))
+            for t in self.tensors
+        ]
+
+        bra_tensors = []
+        for t in self.tensors:
+            new_inds = []
+            for ind in t.inds:
+                if ind == output_lbl:
+                    new_inds.append(output_lbl_dag)
+                elif ind.startswith("bond"):
+                    new_inds.append(ind + "_dag")
+                else:
+                    new_inds.append(ind)
+            bra_tensors.append(
+                qtn.Tensor(
+                    data=jnp.conj(t.data),
+                    inds=tuple(new_inds),
+                    tags=set(t.tags),
+                )
+            )
+
+        full_tn = qtn.TensorNetwork(ket_tensors + bra_tensors)
+        result = full_tn.contract(
+            output_inds=(output_lbl, output_lbl_dag),
+            optimize="auto",
+        )
+        return result.data
 
     # def copy(self):
     #     """Copies the model.
@@ -262,6 +354,8 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
             The tensor network representing the operator.
         tn_vec : :class:`quimb.tensor.tensor_core.TensorNetwork`, or :class:`quimb.tensor.tensor_1d.MatrixProductState`
             The tensor network representing the vector.
+        normalize_on_contract : bool
+            Whether to normalize after each contraction. *Default=True*.
         compress : bool
             Whether to compress the resulting tensor network.
         compress_opts: optional
@@ -274,6 +368,7 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
 
         smpo, mps = tn_op.copy(), tn_vec.copy()
 
+        leading_gap = smpo.leading_gap
         if smpo.spacings:
             spacings = smpo.spacings
         else:
@@ -293,10 +388,46 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
         number_of_sites = len(list_tensors)
         tags = list(qtn.tensor_core.get_tags(result))
 
-        i = 0
-        for S in spacings:
-            if S > 1:
-                tags_to_drop = []
+        # Contract sites before first output into first output
+        if leading_gap > 0:
+            tags_to_drop = []
+            for j in range(0, leading_gap):
+                if j >= number_of_sites - 1:
+                    break
+                if len(list(list_tensors[j].tags)) > 1:
+                    result.contract_ind(list_tensors[j].bonds(list_tensors[j + 1]))
+                    for tag in list(list_tensors[j].tags):
+                        tags_to_drop.extend([tag])
+                else:
+                    result.contract_between(tags[j], tags[j + 1])
+                    tags_to_drop.extend([tags[j]])
+                if normalize_on_contract:
+                    result.normalize()
+            
+            result.drop_tags(tags_to_drop)
+            result.fuse_multibonds_()
+
+        # Contract sites between outputs and trailing sites
+        #
+        # spacings contains two kinds of entries:
+        #   - Inter-output gaps (first n_outputs - 1 entries): i+S is the next output
+        #   - Trailing gap (optional last entry): sites after the final output,
+        #     must be contracted leftward into the last output
+        n_outputs = len(list(smpo.lower_inds))
+        n_inter_output = n_outputs - 1
+
+        i = leading_gap
+        for s_idx, S in enumerate(spacings):
+            if S < 1:
+                continue
+
+            tags_to_drop = []
+            is_trailing = (s_idx >= n_inter_output)
+
+            if not is_trailing:
+                # Contract rightward into the next output site at position i+S.
+                # Non-output sites between i and i+S are at positions i+1 ... i+S-1.
+                # When S == 1, this range is empty (adjacent outputs, nothing between).
                 for j in range(i + 1, i + S):
                     if j >= number_of_sites - 1:
                         break
@@ -309,12 +440,23 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
                         tags_to_drop.extend([tags[j]])
                     if normalize_on_contract:
                         result.normalize()
-                if i + 1 == len(tags):
-                    # if last site of smpo has output_ind
-                    break
-                result.drop_tags(tags_to_drop)
-                i = i + S
-            
+            else:
+                # No next output site: contract all trailing sites leftward
+                # into the current output at position i.
+                # Trailing sites are at positions i+1 ... min(i+S, number_of_sites-1).
+                rightmost = min(i + S, number_of_sites - 1)
+                for j in range(rightmost, i, -1):
+                    result.contract_between(tags[j], tags[j - 1])
+                    tags_to_drop.extend([tags[j]])
+                    if normalize_on_contract:
+                        result.normalize()
+
+            if i + 1 == len(tags):
+                # if last site of smpo has output_ind
+                break
+            result.drop_tags(tags_to_drop)
+            i = i + S
+
             result.fuse_multibonds_()
         
         # if last tensor is a vector, contract it to previous one
@@ -329,25 +471,35 @@ class SpacedMatrixProductOperator(TensorNetwork1DOperator, TensorNetwork1DFlat, 
         
         arrays = [tensor.data for tensor in sorted_tensors]
 
-        if len(arrays[0].shape) == 3:
-            if arrays[0].shape[0] != 1:
-                arr = np.squeeze(arrays[0])
-                if len(arr.shape) == 2:
-                    arrays[0] = arr
-                elif len(arr.shape) == 1: # weird
-                    arrays[0] = a.do("reshape", arr, (*arr.shape, 1))
-            else:
-                arr = np.squeeze(arrays[0])
-                arrays[0] = arr
-            
-        if len(arrays[-1].shape) == 3:
-            arr = np.squeeze(arrays[-1])
+        # Single-site output: array is already (d_out,), no bonds needed
+        if len(arrays) == 1:
+            arr = np.squeeze(arrays[0])
             if len(arr.shape) == 1:
-                arrays[-1] = a.do("reshape", arr, (*arr.shape, 1))
+                arrays[0] = arr
+            elif len(arr.shape) == 2:
+                arrays[0] = arr
             else:
-                arrays[-1] = arr
-        elif len(arrays[-1].shape) == 1:
-            arrays[-1] = a.do("reshape", arrays[-1], (*arrays[-1].shape, 1))
+                arrays[0] = np.squeeze(arr)
+        else:
+            if len(arrays[0].shape) == 3:
+                if arrays[0].shape[0] != 1:
+                    arr = np.squeeze(arrays[0])
+                    if len(arr.shape) == 2:
+                        arrays[0] = arr
+                    elif len(arr.shape) == 1:
+                        arrays[0] = a.do("reshape", arr, (*arr.shape, 1))
+                else:
+                    arr = np.squeeze(arrays[0])
+                    arrays[0] = arr
+
+            if len(arrays[-1].shape) == 3:
+                arr = np.squeeze(arrays[-1])
+                if len(arr.shape) == 1:
+                    arrays[-1] = a.do("reshape", arr, (*arr.shape, 1))
+                else:
+                    arrays[-1] = arr
+            elif len(arrays[-1].shape) == 1:
+                arrays[-1] = a.do("reshape", arrays[-1], (*arrays[-1].shape, 1))
 
         for i, arr in enumerate(arrays):
             if len(arr.shape) >= 4:
@@ -467,8 +619,10 @@ def generate_shape(method: str,
         Number of tensors.
     has_out : bool
         Flag indicating does this tensor have an output index.
-    bond_dim : int
+    bond_dim : int or tuple(int, int)
         Dimension of virtual indices between tensors. *Default = 4*.
+        For ``method='even'`` a tuple ``(chi_left, chi_right)`` may be passed
+        to support non-uniform bond dimensions on a per-site basis.
     phys_dim :  tuple(int, int)
         Dimension of physical indices for individual tensor - *up* and *down*.
     cyclic : bool
@@ -481,23 +635,28 @@ def generate_shape(method: str,
     -------
         tuple
     """
-        
+
     if method == 'even':
-        # supported both for cyclic and non-cyclic
-            if has_out:
-                shape = (bond_dim, bond_dim, *phys_dim)
-                if not cyclic:
-                    if position == 1:
-                        shape = (1, bond_dim, *phys_dim)
-                    if position == L:
-                        shape = (bond_dim, 1, *phys_dim)
-            else:
-                shape = (bond_dim, bond_dim, phys_dim[0])
-                if position == 1 and not cyclic:
-                    shape = (1, bond_dim, phys_dim[0])
-                if position == L and not cyclic:
-                    shape = (bond_dim, 1, phys_dim[0])
+        if isinstance(bond_dim, tuple):
+            chi_left, chi_right = bond_dim
+        else:
+            chi_left = chi_right = bond_dim
+
+        if not cyclic:
+            if position == 1:
+                chi_left = 1
+            if position == L:
+                chi_right = 1
+
+        if has_out:
+            shape = (chi_left, chi_right, *phys_dim)
+        else:
+            shape = (chi_left, chi_right, phys_dim[0])
     else:
+        if isinstance(bond_dim, tuple):
+            raise NotImplementedError(
+                "Non-uniform per-bond dimensions are only supported with shape_method='even'."
+            )
         assert not cyclic
         if position > L // 2:
             j = (L + 1 - abs(2*position - L - 1)) // 2
@@ -532,7 +691,7 @@ def SMPO_initialize(L: int,
             dtype: Any = jnp.float_,
             shape_method: str = 'even',
             spacing: int = 2,
-            bond_dim: int = 4,
+            bond_dim = 4,
             phys_dim: Tuple[int, int] = (2, 2),
             output_inds: Collection = [],
             add_identity: bool = False,
@@ -559,13 +718,21 @@ def SMPO_initialize(L: int,
     shape_method : str
         Method to generate shapes for tensors.
     spacing : int
-        Spacing paramater, or space between output indices in number of sites. When spacing is even.
-    bond_dim : int
+        Spacing parameter, or space between output indices in number of sites. 
+        Used when output_inds is not provided. *Default = 2*.
+    bond_dim : int or list[int]
         Dimension of virtual indices between tensors. *Default = 4*.
+        If a list of length ``L - 1`` is passed, ``bond_dim[i]`` is the
+        dimension of the bond between sites ``i`` and ``i + 1`` (0-indexed).
+        Non-uniform bonds require ``shape_method='even'`` and are not
+        supported with ``cyclic=True``.
     phys_dim :  tuple(int, int)
         Dimension of physical indices for individual tensor - *up* and *down*.
     output_inds : array of int
-        Indexes of tensors which have output indices. From 0 to n. If spacing is not even.
+        Explicit indices of tensors which have output indices (0-indexed).
+        When provided, overrides the spacing parameter.
+        Can place outputs at arbitrary positions, e.g. [9] for center output,
+        or [3, 9, 15] for multiple arbitrary outputs.
     add_identity : bool
         Flag for adding identity to tensor diagonal elements. *Default=False*.
     add_to_output : bool
@@ -589,10 +756,51 @@ def SMPO_initialize(L: int,
     if cyclic and shape_method != 'even':
         raise NotImplementedError("Change shape_method to 'even'.")
 
-    if 0 not in output_inds and len(output_inds) != 0:
-        raise ValueError("First tensor needs to have output index.")
+    # Normalize bond_dim into a per-bond list (length L - 1) plus a scalar fallback.
+    if isinstance(bond_dim, (list, tuple)):
+        bond_dim_list = list(bond_dim)
+        if len(bond_dim_list) != L - 1:
+            raise ValueError(
+                f"bond_dim list must have length L - 1 = {L - 1}, got {len(bond_dim_list)}."
+            )
+        if any((not isinstance(b, int)) or b < 1 for b in bond_dim_list):
+            raise ValueError(f"All bond_dim entries must be positive ints, got {bond_dim_list}.")
+        if shape_method != 'even':
+            raise NotImplementedError(
+                "Per-bond bond_dim list is only supported with shape_method='even'."
+            )
+        if cyclic:
+            raise NotImplementedError(
+                "Per-bond bond_dim list is not supported with cyclic=True."
+            )
+        bond_dim_scalar = max(bond_dim_list)
+        nonuniform_bonds = True
+    else:
+        bond_dim_list = None
+        bond_dim_scalar = bond_dim
+        nonuniform_bonds = False
 
-    if spacing == 1:
+    def _bond_pair(pos_1based: int):
+        """Return (chi_left, chi_right) for the site at 1-indexed position."""
+        if bond_dim_list is None:
+            return bond_dim_scalar
+        # Site i (1-indexed) sits between bonds (i-2) and (i-1) in the 0-indexed list.
+        chi_left = bond_dim_list[pos_1based - 2] if pos_1based >= 2 else bond_dim_scalar
+        chi_right = bond_dim_list[pos_1based - 1] if pos_1based <= L - 1 else bond_dim_scalar
+        return (chi_left, chi_right)
+
+    # Validate output_inds if provided
+    if len(output_inds) != 0:
+        # Check all indices are valid
+        for idx in output_inds:
+            if idx < 0 or idx >= L:
+                raise ValueError(f"output_inds contains invalid index {idx} for L={L}. "
+                               f"Valid range is 0 to {L-1}.")
+        # Check indices are sorted and unique
+        if list(output_inds) != sorted(set(output_inds)):
+            raise ValueError("output_inds must be sorted and contain unique indices.")
+
+    if spacing == 1 and len(output_inds) == 0:
         raise ValueError("Spacing must be > 1, otherwise is Matrix Product Operator.")
     
     if initializer is not None and callable(initializer) and 'rand_unitary' in initializer.__qualname__:
@@ -625,7 +833,7 @@ def SMPO_initialize(L: int,
             if has_out:
                 out_index+=1
 
-        shape = generate_shape(shape_method, L, has_out, bond_dim, phys_dim, cyclic, i, spacing)
+        shape = generate_shape(shape_method, L, has_out, _bond_pair(i), phys_dim, cyclic, i, spacing)
 
         tensor = initializer(key, shape, dtype)
 
@@ -647,7 +855,7 @@ def SMPO_initialize(L: int,
                     copy_tensor.at[:, :, 0, :].set(identity)
                     tensor = copy_tensor
                 
-        if boundary == 'obc':
+        if boundary == 'obc' and shape_method != 'even':
             aux_tensor = jnp.zeros(tensor.shape, dtype=dtype)
             if len(tensor.shape) == 3:
                 if i == 1:
@@ -667,15 +875,28 @@ def SMPO_initialize(L: int,
                     # Right node
                     aux_tensor = aux_tensor.at[0,:,:,:].set(tensor[0,:,:,:])
                     tensor = aux_tensor
-        tensors.append(jnp.squeeze(tensor)/jnp.linalg.norm(tensor))
+        # Squeeze ONLY the boundary singleton bond axis(es) for OBC.
+        # A blanket jnp.squeeze (no axis) would also drop any interior bond
+        # with chi=1, breaking the index/shape match downstream.
+        if not cyclic and tensor.ndim >= 3:
+            if i == 1 and tensor.shape[0] == 1:
+                tensor = jnp.squeeze(tensor, axis=0)
+            elif i == L and tensor.shape[1] == 1:
+                tensor = jnp.squeeze(tensor, axis=1)
+        tensors.append(tensor / jnp.linalg.norm(tensor))
     
     if insert and insert < L and shape_method == 'even':
-        tensors[insert] /= np.sqrt(min(bond_dim, phys_dim[0]))
-    
+        tensors[insert] /= np.sqrt(min(bond_dim_scalar, phys_dim[0]))
+
     smpo = SpacedMatrixProductOperator(tensors, output_inds=output_inds, **kwargs)
 
     if compress:
-        smpo.compress(form="flat", max_bond=bond_dim)  # limit bond_dim
+        if nonuniform_bonds:
+            raise ValueError(
+                "compress=True is incompatible with non-uniform bond_dim; "
+                "the truncation step would clip every bond to a single value."
+            )
+        smpo.compress(form="flat", max_bond=bond_dim_scalar)  # limit bond_dim
 
     if L > 200:  # for large systems
         for i, tensor in enumerate(smpo.tensors):
@@ -693,7 +914,7 @@ def SMPO_initialize(L: int,
         
     else:
         if canonical_center is None:
-            smpo.normalize(output_inds=output_inds)
+            smpo.normalize()
         else:
             smpo.canonicalize(canonical_center, inplace=True)
             smpo.normalize(insert=canonical_center, output_inds=output_inds)

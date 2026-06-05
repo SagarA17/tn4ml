@@ -76,6 +76,32 @@ def TransformedSquaredNorm(model: SpacedMatrixProductOperator, data: qtn.MatrixP
 
     return jax.lax.pow((mps.H & mps)^all, 2)
 
+def TransformedNorm(model: SpacedMatrixProductOperator, data: qtn.MatrixProductState) -> Number:
+    """Norm of transformed input data.
+
+    Parameters
+    ----------
+    model : :class:`tn4ml.models.smpo.SpacedMatrixProductOperator`
+        Spaced Matrix Product Operator
+    data: :class:`quimb.tensor.MatrixProductState`
+        Input mps.
+    Returns
+    -------
+    float
+    """
+    if len(model.tensors) < len(data.tensors):
+        inds_contract = []
+        for i in range(len(data.tensors)):
+            inds_contract.append(f'k{i}')
+
+        mps = (model.H & data)
+        for index in inds_contract:
+            mps.contract_ind(index)
+    else:
+        mps = model.apply(data)
+
+    return (mps.H & mps)^all # Contraction of Hermitian with original, so the |norm|^2
+
 def NoReg(x):
     return 0
 
